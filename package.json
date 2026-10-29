@@ -1,0 +1,24 @@
+{
+  "name": "quotes-invoices",
+  "version": "1.0.0",
+  "description": "Quotes and invoices for contractors and vendors: customers, a price list, PDFs, online approval, invoices and payments",
+  "main": "server/index.js",
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "node --watch server/index.js",
+    "test": "node --test --test-reporter=spec test/*.test.js",
+    "seed": "node scripts/seed.js"
+  },
+  "private": true,
+  "license": "UNLICENSED",
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "better-sqlite3": "^13.0.3",
+    "cookie-session": "^2.1.1",
+    "express": "^5.3.0",
+    "nodemailer": "^10.3.1",
+    "pdfkit": "^0.20.2"
+  }
+}
