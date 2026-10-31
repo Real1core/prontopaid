@@ -40,7 +40,36 @@ const config = {
     pass: env.SMTP_PASS || '',
     from: env.MAIL_FROM || env.SMTP_USER || '',
   },
+  // Payments, bank connection and the Premium subscription (see server/stripe.js and README).
+  stripe: {
+    secretKey: env.STRIPE_SECRET_KEY || '',
+    webhookSecret: env.STRIPE_WEBHOOK_SECRET || '',
+    // The Connect endpoint (events from businesses' accounts) has its own secret.
+    connectWebhookSecret: env.STRIPE_CONNECT_WEBHOOK_SECRET || '',
+    // The monthly Premium price (Stripe Dashboard > Products), e.g. price_123.
+    premiumPriceId: env.STRIPE_PREMIUM_PRICE_ID || '',
+    // ProntoPaid's share of each online payment, in percent (0 = none). Stripe's own fees come out of the business's share.
+    platformFeePercent: Number(env.PLATFORM_FEE_PERCENT || 0),
+  },
+  // Customer financing (see server/financing.js). "wisetack" once ProntoPaid is a Wisetack partner,
+  // "test" for a pretend lender to try the flow, blank to turn financing off.
+  financing: {
+    provider: ['wisetack', 'test'].includes(env.FINANCING_PROVIDER) ? env.FINANCING_PROVIDER : '',
+    wisetack: {
+      apiUrl: (env.WISETACK_API_URL || 'https://api.wisetack.com').replace(/\/$/, ''),
+      apiKey: env.WISETACK_API_KEY || '',
+      webhookSecret: env.WISETACK_WEBHOOK_SECRET || '',
+      // Where a business enrolls as a Wisetack merchant through ProntoPaid (from Wisetack's partner team).
+      signupUrl: env.WISETACK_SIGNUP_URL || '',
+    },
+    // The amounts a customer can finance, in dollars.
+    minAmount: Number(env.FINANCING_MIN || 500),
+    maxAmount: Number(env.FINANCING_MAX || 25000),
+  },
+  // Turn Premium on for every business without a subscription (local testing only).
+  premiumForAll: /^(1|true|yes)$/i.test(env.PREMIUM_FOR_ALL || ''),
 };
 config.mailEnabled = Boolean(config.smtp.host && config.smtp.from);
+config.stripeEnabled = Boolean(config.stripe.secretKey);
 
 module.exports = config;

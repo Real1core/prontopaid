@@ -1,8 +1,8 @@
-const { startServer, client, addUser } = require('./helpers');
+const { startServer, client, addBusiness, addUser } = require('./helpers');
 const test = require('node:test');
 const assert = require('node:assert');
 const billing = require('../server/billing');
-const { services } = require('../server/routes/billing');
+const { services } = require('../server/mail');
 
 async function setup(t) {
   const { db, server, base } = await startServer();
@@ -10,10 +10,10 @@ async function setup(t) {
     server.close();
     services.mail = null;
   });
-  addUser(db, 'a@co.com', 'Ada Admin', 'admin');
-  addUser(db, 'lee@co.com', 'Lee Field');
-  addUser(db, 'oz@co.com', 'Oz Other');
-  db.prepare("INSERT INTO settings (key, value) VALUES ('company_name', '\"Acme Repairs\"')").run();
+  const b = addBusiness(db, 'Acme Repairs');
+  addUser(db, b, 'a@co.com', 'Ada Admin', 'admin');
+  addUser(db, b, 'lee@co.com', 'Lee Field');
+  addUser(db, b, 'oz@co.com', 'Oz Other');
   const admin = client(base);
   await admin.login('a@co.com');
   const lee = client(base);
@@ -105,8 +105,11 @@ test('billing: quote → customer approves online → invoice → payments', asy
   assert.strictEqual((await anon.post(`/api/public/docs/${token}/approve`, { name: ' ' })).status, 400);
   assert.strictEqual((await anon.post(`/api/public/docs/${token}/approve`, { name: 'Pat Owner' })).status, 200);
   assert.strictEqual((await anon.post(`/api/public/docs/${token}/decline`, {})).status, 409);
-  assert.deepStrictEqual(sent[1].to, ['lee@co.com']);
-  assert.match(sent[1].subject, /Quote Q-1001 approved/);
+  // Whoever made it and the administrators hear about it (in the app and by email).
+  assert.deepStrictEqual(sent.slice(1).map((m) => m.to[0]).sort(), ['a@co.com', 'lee@co.com']);
+  assert.match(sent[1].subject, /Pat Owner approved quote Q-1001/);
+  assert.strictEqual((await lee.get('/api/notifications')).data.unread, 1);
+  assert.strictEqual((await oz.get('/api/notifications')).data.unread, 0);
   d = (await lee.get(`/api/docs/${id}`)).data;
   assert.strictEqual(d.doc.display_status, 'approved');
   assert.strictEqual(d.doc.approved_name, 'Pat Owner');
@@ -183,7 +186,7 @@ test('billing: overdue, void, declined and status changes by hand', async (t) =>
 
   const pdf = await admin.get(`/api/docs/${q}/pdf?download=1`);
   assert.strictEqual(pdf.data.subarray(0, 4).toString(), '%PDF');
-  assert.match(pdf.headers.get('content-disposition'), /^attachment; filename="Quote Q-1001.pdf"$/);
+  assert.match(pdf.headers.get('content-disposition'), /^attachment; filename="Quote Q-1001.pdf"/);
 
   await admin.del(`/api/docs/${q}`);
   assert.strictEqual((await anon.get(`/api/public/docs/${token}`)).status, 404);

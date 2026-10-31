@@ -4,7 +4,12 @@ const path = require('path');
 
 // Isolated data folder, and no email, for every test run (set before config loads).
 process.env.DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'prontopaid-test-'));
-for (const key of ['SMTP_HOST', 'MAIL_FROM', 'BASE_URL', 'SESSION_SECRET']) delete process.env[key];
+for (const key of ['SMTP_HOST', 'MAIL_FROM', 'BASE_URL', 'SESSION_SECRET', 'PREMIUM_FOR_ALL', 'WISETACK_API_KEY']) delete process.env[key];
+// Stripe and the lender are faked in the tests (stripe.transport, financing.transport).
+process.env.STRIPE_SECRET_KEY = 'sk_test_fake';
+process.env.STRIPE_WEBHOOK_SECRET = 'whsec_test';
+process.env.STRIPE_PREMIUM_PRICE_ID = 'price_premium';
+process.env.FINANCING_PROVIDER = 'test';
 
 const { openDb } = require('../server/db');
 const { createApp } = require('../server/app');
@@ -21,8 +26,8 @@ async function startServer() {
 /** Minimal cookie-keeping client. */
 function client(base) {
   let cookie = '';
-  async function request(method, url, body) {
-    const headers = { cookie };
+  async function request(method, url, body, extra = {}) {
+    const headers = { cookie, ...extra };
     let payload;
     if (body !== undefined) {
       headers['Content-Type'] = 'application/json';
@@ -44,17 +49,39 @@ function client(base) {
     return { status: res.status, data, headers: res.headers };
   }
   return {
-    get: (u) => request('GET', u),
-    post: (u, b) => request('POST', u, b),
-    put: (u, b) => request('PUT', u, b),
+    get: (u, headers) => request('GET', u, undefined, headers),
+    post: (u, b, headers) => request('POST', u, b, headers),
+    put: (u, b, headers) => request('PUT', u, b, headers),
     del: (u) => request('DELETE', u),
+    raw: (method, u, body, headers) => fetch(base + u, { method, headers: { cookie, ...headers }, body, redirect: 'manual' }),
     login: (email, password = 'password123') => request('POST', '/auth/login', { email, password }),
   };
 }
 
-/** Add a team member with the password "password123". */
-function addUser(db, email, name, role = 'member') {
-  return Number(db.prepare('INSERT INTO users (email, name, role, password_hash) VALUES (?, ?, ?, ?)').run(email, name, role, hashPassword('password123')).lastInsertRowid);
+/** A business, named as given. */
+function addBusiness(db, name = 'Acme Repairs') {
+  const id = Number(db.prepare('INSERT INTO businesses (name) VALUES (?)').run(name).lastInsertRowid);
+  db.prepare("INSERT INTO settings (business_id, key, value) VALUES (?, 'company_name', ?)").run(id, JSON.stringify(name));
+  return id;
 }
 
-module.exports = { startServer, client, addUser };
+/** Add a person to a business with the password "password123". */
+function addUser(db, businessId, email, name, role = 'member', language = 'en') {
+  return Number(db.prepare('INSERT INTO users (business_id, email, name, role, password_hash, language) VALUES (?, ?, ?, ?, ?, ?)').run(businessId, email, name, role, hashPassword('password123'), language).lastInsertRowid);
+}
+
+/** A fake fetch that answers from a list of [method, url-regex, response or (url, opts) => response], and records calls. */
+function fakeFetch(handlers) {
+  const calls = [];
+  const fn = async (url, opts = {}) => {
+    calls.push({ url, method: opts.method || 'GET', body: opts.body, headers: opts.headers });
+    const hit = handlers.find(([m, re]) => m === (opts.method || 'GET') && re.test(url));
+    if (!hit) return { ok: false, status: 404, json: async () => ({ error: { message: `no fake for ${opts.method} ${url}` } }) };
+    const out = typeof hit[2] === 'function' ? hit[2](url, opts) : hit[2];
+    return { ok: true, status: 200, json: async () => out };
+  };
+  fn.calls = calls;
+  return fn;
+}
+
+module.exports = { startServer, client, addBusiness, addUser, fakeFetch };

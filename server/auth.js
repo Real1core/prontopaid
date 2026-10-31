@@ -1,8 +1,10 @@
-// Sign-in with email and password. The first person to open the app sets up the business and
-// becomes its administrator; administrators add the rest of the team on the Team page.
+// Sign-up and sign-in with email and password. Anyone can sign up a business and becomes its
+// administrator; administrators add the rest of their team on the Team tab. Everything a person
+// sees belongs to their own business (req.business).
 const crypto = require('crypto');
 const express = require('express');
-const { HttpError, isEmail } = require('./util');
+const { HttpError, msg, isEmail } = require('./util');
+const { pick } = require('../public/i18n');
 
 const MIN_PASSWORD = 8;
 
@@ -20,9 +22,7 @@ function checkPassword(password, stored) {
   return crypto.timingSafeEqual(actual, expected);
 }
 
-function passwordProblem(password) {
-  return String(password || '').length < MIN_PASSWORD ? `Use a password of at least ${MIN_PASSWORD} characters.` : null;
-}
+const passwordProblem = (password) => (String(password || '').length < MIN_PASSWORD ? msg('Use a password of at least {n} characters.', { n: MIN_PASSWORD }) : null);
 
 // After 5 wrong passwords for an email, wait 15 minutes.
 const LOCK_AFTER = 5;
@@ -31,9 +31,11 @@ const LOCK_MS = 15 * 60 * 1000;
 function loadUser(db) {
   return (req, _res, next) => {
     req.user = null;
+    req.business = null;
     if (req.session && req.session.userId) {
-      req.user = db.prepare('SELECT id, email, name, role FROM users WHERE id = ? AND active = 1').get(req.session.userId) || null;
-      if (!req.user) req.session = null;
+      req.user = db.prepare('SELECT id, business_id, email, name, role, language FROM users WHERE id = ? AND active = 1').get(req.session.userId) || null;
+      if (req.user) req.business = db.prepare('SELECT * FROM businesses WHERE id = ?').get(req.user.business_id);
+      else req.session = null;
     }
     next();
   };
@@ -46,7 +48,7 @@ function requireUser(req, _res, next) {
 
 function requireAdmin(req, _res, next) {
   if (!req.user) return next(new HttpError(401, 'Please sign in.'));
-  if (req.user.role !== 'admin') return next(new HttpError(403, 'Administrators only.'));
+  if (req.user.role !== 'admin') return next(new HttpError(403, 'Only administrators can do that.'));
   next();
 }
 
@@ -54,34 +56,41 @@ function userInput(body, { password = true } = {}) {
   const name = String(body.name ?? '').trim().slice(0, 100);
   const email = String(body.email ?? '').trim().toLowerCase().slice(0, 200);
   const errors = [];
-  if (!name) errors.push('Enter a name.');
-  if (!isEmail(email)) errors.push('Enter a valid email address.');
+  if (!name) errors.push(msg('Enter a name.'));
+  if (!isEmail(email)) errors.push(msg('Enter a valid email address.'));
   if (password) {
     const problem = passwordProblem(body.password);
     if (problem) errors.push(problem);
   }
-  if (errors.length) throw new HttpError(400, errors.join(' '));
-  return { name, email, role: body.role === 'admin' ? 'admin' : 'member' };
+  if (errors.length) throw new HttpError(400, errors);
+  return { name, email, role: body.role === 'admin' ? 'admin' : 'member', language: pick(body.language) };
 }
 
-function authRouter(db, { onSetup } = {}) {
+/**
+ * @param {object} hooks
+ * @param {(db, businessId, values) => void} hooks.onSignup  saves the business's first settings
+ */
+function authRouter(db, { onSignup } = {}) {
   const router = express.Router();
   const failures = new Map(); // email -> {count, until}, for the lock above
-  const needsSetup = () => !db.prepare('SELECT 1 FROM users').get();
 
   router.get('/me', (req, res) => {
-    res.json({ user: req.user, needsSetup: needsSetup() });
+    res.json({ user: req.user, business: req.business ? { id: req.business.id, name: req.business.name } : null });
   });
 
-  // First run: the business name and its first administrator.
-  router.post('/setup', (req, res) => {
-    if (!needsSetup()) throw new HttpError(409, 'This app is already set up. Sign in instead.');
+  // A new business and its first administrator.
+  router.post('/signup', (req, res) => {
     const company = String(req.body.company_name ?? '').trim().slice(0, 200);
-    if (!company) throw new HttpError(400, 'Enter your business name.');
     const u = userInput(req.body);
-    const id = Number(db.prepare("INSERT INTO users (email, name, role, password_hash, last_sign_in_at) VALUES (?, ?, 'admin', ?, datetime('now'))").run(u.email, u.name, hashPassword(req.body.password)).lastInsertRowid);
-    if (onSetup) onSetup({ company_name: company, company_email: u.email });
-    req.session.userId = id;
+    if (!company) throw new HttpError(400, 'Enter your business name.');
+    if (db.prepare('SELECT 1 FROM users WHERE email = ?').get(u.email)) throw new HttpError(409, 'That email already has an account. Sign in instead.');
+    const userId = db.transaction(() => {
+      const businessId = Number(db.prepare('INSERT INTO businesses (name) VALUES (?)').run(company).lastInsertRowid);
+      if (onSignup) onSignup(db, businessId, { company_name: company, company_email: u.email });
+      return Number(db.prepare("INSERT INTO users (business_id, email, name, role, password_hash, language, last_sign_in_at) VALUES (?, ?, ?, 'admin', ?, ?, datetime('now'))")
+        .run(businessId, u.email, u.name, hashPassword(req.body.password), u.language).lastInsertRowid);
+    })();
+    req.session.userId = userId;
     res.status(201).json({ ok: true });
   });
 
@@ -91,8 +100,7 @@ function authRouter(db, { onSetup } = {}) {
     if (f && f.count >= LOCK_AFTER && Date.now() < f.until) throw new HttpError(429, 'Too many wrong passwords. Try again in 15 minutes.');
     const user = db.prepare('SELECT id, password_hash FROM users WHERE email = ? AND active = 1').get(email);
     if (!user || !checkPassword(req.body.password ?? '', user.password_hash)) {
-      const next = { count: (f && Date.now() < f.until ? f.count : 0) + 1, until: Date.now() + LOCK_MS };
-      failures.set(email, next);
+      failures.set(email, { count: (f && Date.now() < f.until ? f.count : 0) + 1, until: Date.now() + LOCK_MS });
       throw new HttpError(401, 'Wrong email or password.');
     }
     failures.delete(email);
@@ -110,41 +118,51 @@ function authRouter(db, { onSetup } = {}) {
     const row = db.prepare('SELECT password_hash FROM users WHERE id = ?').get(req.user.id);
     if (!checkPassword(req.body.current ?? '', row.password_hash)) throw new HttpError(400, 'Your current password is wrong.');
     const problem = passwordProblem(req.body.password);
-    if (problem) throw new HttpError(400, problem);
+    if (problem) throw new HttpError(400, [problem]);
     db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(hashPassword(req.body.password), req.user.id);
+    res.json({ ok: true });
+  });
+
+  // The English / Español switch in the menu.
+  router.put('/language', requireUser, (req, res) => {
+    db.prepare('UPDATE users SET language = ? WHERE id = ?').run(pick(req.body.language), req.user.id);
     res.json({ ok: true });
   });
 
   return router;
 }
 
-/** The Team page: administrators add people, change their role, reset passwords and turn accounts off. */
+/** The Team tab: administrators add people, change their role, reset passwords and turn accounts off. */
 function teamRouter(db) {
   const router = express.Router();
   router.use(requireAdmin);
+  const member = (req) => {
+    const row = db.prepare('SELECT * FROM users WHERE id = ? AND business_id = ?').get(Number(req.params.id), req.user.business_id);
+    if (!row) throw new HttpError(404, 'Not found.');
+    return row;
+  };
 
-  router.get('/', (_req, res) => {
-    res.json(db.prepare('SELECT id, email, name, role, active, last_sign_in_at, created_at FROM users ORDER BY active DESC, name COLLATE NOCASE').all());
+  router.get('/', (req, res) => {
+    res.json(db.prepare('SELECT id, email, name, role, language, active, last_sign_in_at, created_at FROM users WHERE business_id = ? ORDER BY active DESC, name COLLATE NOCASE').all(req.user.business_id));
   });
 
   router.post('/', (req, res) => {
     const u = userInput(req.body);
-    if (db.prepare('SELECT 1 FROM users WHERE email = ?').get(u.email)) throw new HttpError(409, 'Someone with that email is already on the team.');
-    const id = db.prepare('INSERT INTO users (email, name, role, password_hash) VALUES (?, ?, ?, ?)').run(u.email, u.name, u.role, hashPassword(req.body.password)).lastInsertRowid;
+    if (db.prepare('SELECT 1 FROM users WHERE email = ?').get(u.email)) throw new HttpError(409, 'That email already has an account.');
+    const id = db.prepare('INSERT INTO users (business_id, email, name, role, password_hash, language) VALUES (?, ?, ?, ?, ?, ?)')
+      .run(req.user.business_id, u.email, u.name, u.role, hashPassword(req.body.password), u.language).lastInsertRowid;
     res.status(201).json({ id: Number(id) });
   });
 
   // Body: {name, email, role, active, password?}. A password here resets theirs.
   router.put('/:id', (req, res) => {
-    const id = Number(req.params.id);
-    const current = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
-    if (!current) throw new HttpError(404, 'Not found.');
+    const current = member(req);
     const u = userInput(req.body, { password: Boolean(req.body.password) });
     const active = req.body.active === undefined ? current.active : req.body.active ? 1 : 0;
-    if (id === req.user.id && (u.role !== 'admin' || !active)) throw new HttpError(400, "You can't remove your own administrator access.");
-    if (db.prepare('SELECT 1 FROM users WHERE email = ? AND id != ?').get(u.email, id)) throw new HttpError(409, 'Someone else already uses that email.');
-    db.prepare('UPDATE users SET name = ?, email = ?, role = ?, active = ? WHERE id = ?').run(u.name, u.email, u.role, active, id);
-    if (req.body.password) db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(hashPassword(req.body.password), id);
+    if (current.id === req.user.id && (u.role !== 'admin' || !active)) throw new HttpError(400, "You can't remove your own administrator access.");
+    if (db.prepare('SELECT 1 FROM users WHERE email = ? AND id != ?').get(u.email, current.id)) throw new HttpError(409, 'That email already has an account.');
+    db.prepare('UPDATE users SET name = ?, email = ?, role = ?, active = ? WHERE id = ?').run(u.name, u.email, u.role, active, current.id);
+    if (req.body.password) db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(hashPassword(req.body.password), current.id);
     res.json({ ok: true });
   });
 

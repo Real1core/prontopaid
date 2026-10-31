@@ -1,4 +1,4 @@
-const { startServer, client, addUser } = require('./helpers');
+const { startServer, client, addBusiness, addUser } = require('./helpers');
 const test = require('node:test');
 const assert = require('node:assert');
 const zlib = require('zlib');
@@ -23,28 +23,51 @@ function pngDataUrl() {
   return `data:image/png;base64,${png.toString('base64')}`;
 }
 
-test('auth: first run sets up the business and its administrator, once', async (t) => {
+test('sign-up: each new business gets its own administrator, settings and data', async (t) => {
   const { server, base } = await startServer();
   t.after(() => server.close());
   const c = client(base);
-  assert.deepStrictEqual((await c.get('/auth/me')).data, { user: null, needsSetup: true });
+  assert.deepStrictEqual((await c.get('/auth/me')).data, { user: null, business: null });
   assert.strictEqual((await c.get('/api/docs')).status, 401);
-  assert.strictEqual((await c.post('/auth/setup', { company_name: 'Acme', name: 'Ada', email: 'ada@acme.com', password: 'short' })).status, 400);
-  assert.strictEqual((await c.post('/auth/setup', { company_name: 'Acme', name: 'Ada', email: 'ada@acme.com', password: 'longenough' })).status, 201);
+  const bad = await c.post('/auth/signup', { company_name: 'Acme', name: 'Ada', email: 'ada@acme.com', password: 'short' }, { 'X-Lang': 'es' });
+  assert.strictEqual(bad.status, 400);
+  assert.strictEqual(bad.data.error, 'Use una contraseña de al menos 8 caracteres.'); // errors in the person's language
+  assert.strictEqual((await c.post('/auth/signup', { company_name: 'Acme', name: 'Ada', email: 'ada@acme.com', password: 'longenough', language: 'es' })).status, 201);
   const me = (await c.get('/auth/me')).data;
   assert.strictEqual(me.user.role, 'admin');
-  assert.strictEqual(me.needsSetup, false);
+  assert.strictEqual(me.user.language, 'es');
+  assert.strictEqual(me.business.name, 'Acme');
   const meta = (await c.get('/api/meta')).data;
   assert.strictEqual(meta.settings.company_name, 'Acme');
   assert.strictEqual(meta.settings.company_email, 'ada@acme.com');
-  // Nobody else can "set up" the app again.
-  assert.strictEqual((await client(base).post('/auth/setup', { company_name: 'X', name: 'X', email: 'x@x.com', password: 'longenough' })).status, 409);
+  // The same email can't sign up twice.
+  assert.strictEqual((await client(base).post('/auth/signup', { company_name: 'X', name: 'X', email: 'ADA@acme.com', password: 'longenough' })).status, 409);
+
+  // A second business sees none of the first one's customers, quotes or team, even by id.
+  const quote = (await c.post('/api/docs', { type: 'quote', lines: [{ name: 'Work', unit_price: '100' }] })).data.id;
+  const customer = (await c.post('/api/contacts', { name: 'Pat' })).data.id;
+  const other = client(base);
+  await other.post('/auth/signup', { company_name: 'Bolt Electric', name: 'Bo', email: 'bo@bolt.com', password: 'longenough' });
+  assert.strictEqual((await other.get('/api/docs')).data.quotes.length, 0);
+  assert.strictEqual((await other.get('/api/contacts')).data.length, 0);
+  assert.strictEqual((await other.get('/api/team')).data.length, 1);
+  assert.strictEqual((await other.get(`/api/docs/${quote}`)).status, 404);
+  assert.strictEqual((await other.put(`/api/contacts/${customer}`, { name: 'Hijacked' })).status, 404);
+  assert.strictEqual((await other.post('/api/docs', { type: 'quote', contact_id: customer })).status, 400);
+  // Each business numbers its own quotes from the start.
+  const theirs = (await other.post('/api/docs', { type: 'quote', lines: [{ name: 'Panel', unit_price: '900' }] })).data.id;
+  assert.strictEqual((await other.get(`/api/docs/${theirs}`)).data.doc.number, 'Q-1001');
+  assert.strictEqual((await c.get(`/api/docs/${quote}`)).data.doc.number, 'Q-1001');
+  // The language switch.
+  await c.put('/auth/language', { language: 'en' });
+  assert.strictEqual((await c.get('/auth/me')).data.user.language, 'en');
 });
 
 test('auth: sign in, wrong passwords, team members and turning an account off', async (t) => {
   const { db, server, base } = await startServer();
   t.after(() => server.close());
-  addUser(db, 'ada@acme.com', 'Ada', 'admin');
+  const b = addBusiness(db);
+  addUser(db, b, 'ada@acme.com', 'Ada', 'admin');
   const admin = client(base);
   assert.strictEqual((await admin.login('ada@acme.com', 'nope-nope')).status, 401);
   assert.strictEqual((await admin.login('ADA@acme.com')).status, 200);
@@ -66,9 +89,11 @@ test('auth: sign in, wrong passwords, team members and turning an account off', 
   assert.strictEqual((await admin.put(`/api/team/${samRow.id}`, { name: 'Sam', email: 'sam@acme.com', role: 'member', active: false })).status, 200);
   assert.strictEqual((await sam.get('/api/docs')).status, 401);
   assert.strictEqual((await client(base).login('sam@acme.com', 'newpassword1')).status, 401);
-  // An admin can't lock themselves out.
+  // An admin can't lock themselves out, or touch another business's people.
   const adaRow = (await admin.get('/api/team')).data.find((u) => u.email === 'ada@acme.com');
   assert.strictEqual((await admin.put(`/api/team/${adaRow.id}`, { name: 'Ada', email: 'ada@acme.com', role: 'member' })).status, 400);
+  const otherUser = addUser(db, addBusiness(db, 'Other Co'), 'x@other.com', 'X', 'admin');
+  assert.strictEqual((await admin.put(`/api/team/${otherUser}`, { name: 'X', email: 'x@other.com', role: 'member', active: false })).status, 404);
 
   // Five wrong passwords lock the email for a while, even with the right one after.
   const x = client(base);
@@ -79,18 +104,18 @@ test('auth: sign in, wrong passwords, team members and turning an account off', 
 test('logo: uploaded on the Company tab, shown to customers and printed on the PDF', async (t) => {
   const { db, server, base } = await startServer();
   t.after(() => server.close());
-  addUser(db, 'ada@acme.com', 'Ada', 'admin');
+  addUser(db, addBusiness(db), 'ada@acme.com', 'Ada', 'admin');
   const admin = client(base);
   await admin.login('ada@acme.com');
   assert.strictEqual((await admin.put('/api/settings/logo', { data: 'data:image/png;base64,AAAA' })).status, 400);
   assert.strictEqual((await admin.put('/api/settings/logo', { data: pngDataUrl() })).status, 200);
   assert.strictEqual((await admin.get('/api/meta')).data.logo, true);
-  const logo = await client(base).get('/api/public/logo');
+  const logo = await admin.get('/api/logo');
   assert.strictEqual(logo.headers.get('content-type'), 'image/png');
   const id = (await admin.post('/api/docs', { type: 'invoice', lines: [{ name: 'Work', unit_price: '10' }] })).data.id;
   const pdf = await admin.get(`/api/docs/${id}/pdf`);
   assert.strictEqual(pdf.data.subarray(0, 4).toString(), '%PDF');
   assert.ok(pdf.data.includes('/Subtype /Image'));
   await admin.del('/api/settings/logo');
-  assert.strictEqual((await client(base).get('/api/public/logo')).status, 404);
+  assert.strictEqual((await admin.get('/api/logo')).status, 404);
 });

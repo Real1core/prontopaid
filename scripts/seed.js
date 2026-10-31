@@ -1,8 +1,8 @@
-// Adds sample customers and price list items so you can try the app.
+// Adds a demo business with customers and a price list. Sign in as demo@example.com / password123.
 const path = require('path');
 const config = require('../server/config');
 const { openDb } = require('../server/db');
-const { seedSamples } = require('../server/seed');
+const { seedDemo } = require('../server/seed');
 
-seedSamples(openDb(path.join(config.dataDir, 'prontopaid.db')));
-console.log('Sample customers and price list added. Run "npm start".');
+seedDemo(openDb(path.join(config.dataDir, 'prontopaid.db')));
+console.log('Demo business added. Run "npm start" and sign in as demo@example.com / password123.');

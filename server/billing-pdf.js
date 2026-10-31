@@ -2,7 +2,8 @@
 // quote an approval line (or who approved it online); for an invoice the payments and balance.
 const PDFDocument = require('pdfkit');
 const logo = require('./logo');
-const { TYPE_LABEL, fmtMoney } = require('./billing');
+const { TYPE_LABEL, fmtMoney: money, fmtDate: date, localized } = require('./billing');
+const { tr } = require('../public/i18n');
 
 const COLORS = {
   text: '#1f2933',
@@ -15,19 +16,25 @@ const COLORS = {
 };
 const MARGIN = 48;
 
-const fmtDate = (iso) => (iso ? new Date(`${iso.slice(0, 10)}T12:00:00Z`).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric', timeZone: 'UTC' }) : '');
 const fmtQty = (q) => (Number.isInteger(q) ? String(q) : String(Math.round(q * 1000) / 1000));
 const cityLine = (x) => [[x.city, x.state].filter(Boolean).join(', '), x.zip].filter(Boolean).join(' ');
 
 /**
- * @param {object} detail  billing.documentDetail()
+ * @param {object} detail   billing.documentDetail()
  * @param {object} settings billing.getSettings()
- * @param {string} [link]   where the customer can view and approve it online
+ * @param {object} options
+ * @param {number} options.businessId whose logo to print
+ * @param {string} [options.lang]     'en' or 'es': the customer's language
+ * @param {string} [options.link]     where the customer can view, approve and pay it online
+ * @param {boolean} [options.payOnline] whether that page takes online payment
  * @returns {Promise<Buffer>}
  */
-function generateDocument(detail, settings, link) {
+function generateDocument(detail, settings, { businessId, lang = 'en', link, payOnline = false } = {}) {
+  const t_ = (text, params) => tr(lang, text, params);
+  const fmtMoney = (c) => money(c, lang);
+  const fmtDate = (iso) => date(iso, lang);
   const { doc: d, lines, payments, contact, totals: t } = detail;
-  const label = TYPE_LABEL[d.type];
+  const label = t_(TYPE_LABEL[d.type]);
   const pdf = new PDFDocument({ size: 'LETTER', margin: MARGIN, bufferPages: true, info: { Title: `${label} ${d.number}`, Author: settings.company_name } });
   const chunks = [];
   pdf.on('data', (c) => chunks.push(c));
@@ -47,7 +54,7 @@ function generateDocument(detail, settings, link) {
 
   // ---- Header: logo (or company name) on the left, QUOTE / INVOICE and its number on the right.
   let headerBottom = MARGIN;
-  const logoFile = logo.current();
+  const logoFile = logo.current(businessId);
   if (logoFile) {
     try {
       pdf.image(logoFile.path, MARGIN, MARGIN, { fit: [168, 64] });
@@ -62,7 +69,7 @@ function generateDocument(detail, settings, link) {
   }
   pdf.fillColor(COLORS.accent).font('Helvetica-Bold').fontSize(24).text(label.toUpperCase(), MARGIN, MARGIN, { width: W, align: 'right', characterSpacing: 2 });
   pdf.fillColor(COLORS.text).font('Helvetica').fontSize(10).text(`# ${d.number}`, { width: W, align: 'right' });
-  const stamp = { paid: ['PAID', COLORS.good], void: ['VOID', COLORS.bad], approved: ['APPROVED', COLORS.good], invoiced: ['APPROVED', COLORS.good], declined: ['DECLINED', COLORS.bad] }[d.display_status];
+  const stamp = { paid: [t_('PAID'), COLORS.good], void: [t_('VOID'), COLORS.bad], approved: [t_('APPROVED'), COLORS.good], invoiced: [t_('APPROVED'), COLORS.good], declined: [t_('DECLINED'), COLORS.bad] }[d.display_status];
   if (stamp) pdf.fillColor(stamp[1]).font('Helvetica-Bold').fontSize(11).text(stamp[0], { width: W, align: 'right', characterSpacing: 1 });
   headerBottom = Math.max(headerBottom, pdf.y);
   pdf.moveTo(MARGIN, headerBottom + 8).lineTo(MARGIN + W, headerBottom + 8).lineWidth(2).strokeColor(COLORS.accent).stroke();
@@ -78,15 +85,15 @@ function generateDocument(detail, settings, link) {
     });
     return pdf.y;
   };
-  const from = block(MARGIN, 'From', [
+  const from = block(MARGIN, t_('From'), [
     [settings.company_name, true],
     settings.company_address ? [settings.company_address] : null,
     settings.company_phone ? [settings.company_phone] : null,
     settings.company_email ? [settings.company_email] : null,
     settings.company_website ? [settings.company_website] : null,
-    settings.license_number ? [`License # ${settings.license_number}`] : null,
+    settings.license_number ? [t_('License # {n}', { n: settings.license_number })] : null,
   ]);
-  const to = block(MARGIN + colW + 12, label === 'Quote' ? 'Prepared for' : 'Bill to', contact ? [
+  const to = block(MARGIN + colW + 12, d.type === 'quote' ? t_('Prepared for') : t_('Bill to'), contact ? [
     [contact.name, true],
     contact.company && contact.company !== contact.name ? [contact.company] : null,
     contact.address ? [contact.address] : null,
@@ -95,15 +102,15 @@ function generateDocument(detail, settings, link) {
     contact.email ? [contact.email] : null,
   ] : [['—']]);
   const dates = [
-    [`Date: ${fmtDate(d.issue_date)}`, false],
-    d.due_date ? [`${d.type === 'quote' ? 'Valid until' : 'Due'}: ${fmtDate(d.due_date)}`] : null,
-    d.quote_number ? [`For quote # ${d.quote_number}`] : null,
+    [t_('Date: {date}', { date: fmtDate(d.issue_date) }), false],
+    d.due_date ? [t_(d.type === 'quote' ? 'Valid until: {date}' : 'Due: {date}', { date: fmtDate(d.due_date) })] : null,
+    d.quote_number ? [t_('For quote # {n}', { n: d.quote_number })] : null,
   ];
-  pdf.fillColor(COLORS.muted).font('Helvetica-Bold').fontSize(8).text('DETAILS', MARGIN + (colW + 12) * 2, top, { width: colW, characterSpacing: 1 });
+  pdf.fillColor(COLORS.muted).font('Helvetica-Bold').fontSize(8).text(t_('DETAILS'), MARGIN + (colW + 12) * 2, top, { width: colW, characterSpacing: 1 });
   pdf.moveDown(0.3);
   dates.filter(Boolean).forEach(([text]) => pdf.fillColor(COLORS.text).font('Helvetica').fontSize(9.5).text(text, MARGIN + (colW + 12) * 2, pdf.y, { width: colW }));
   pdf.fillColor(COLORS.accent).font('Helvetica-Bold').fontSize(13).text(fmtMoney(d.type === 'invoice' && d.display_status !== 'void' ? t.balance : t.total), MARGIN + (colW + 12) * 2, pdf.y + 4, { width: colW });
-  pdf.fillColor(COLORS.muted).font('Helvetica').fontSize(8).text(d.type === 'invoice' ? 'Balance due' : 'Total', { width: colW });
+  pdf.fillColor(COLORS.muted).font('Helvetica').fontSize(8).text(d.type === 'invoice' ? t_('Balance due') : t_('Total'), { width: colW });
   pdf.y = Math.max(from, to, pdf.y) + 14;
   pdf.x = MARGIN;
 
@@ -111,7 +118,7 @@ function generateDocument(detail, settings, link) {
     pdf.rect(MARGIN, pdf.y, W, 1).fill(COLORS.rule);
     pdf.y += 8;
     if (d.title) pdf.fillColor(COLORS.text).font('Helvetica-Bold').fontSize(12).text(d.title, MARGIN, pdf.y, { width: W });
-    if (d.job_address) pdf.fillColor(COLORS.muted).font('Helvetica').fontSize(9.5).text(`Job site: ${d.job_address}`, MARGIN, pdf.y + 2, { width: W });
+    if (d.job_address) pdf.fillColor(COLORS.muted).font('Helvetica').fontSize(9.5).text(t_('Job site: {address}', { address: d.job_address }), MARGIN, pdf.y + 2, { width: W });
     pdf.y += 10;
   }
 
@@ -126,15 +133,15 @@ function generateDocument(detail, settings, link) {
     const y = pdf.y;
     pdf.rect(MARGIN, y, W, 20).fill(COLORS.accent);
     pdf.fillColor('#ffffff').font('Helvetica-Bold').fontSize(8.5);
-    pdf.text('ITEM', MARGIN + 8, y + 6, { width: nameW - 8, characterSpacing: 0.5 });
-    pdf.text('QTY', xQty, y + 6, { width: cols.qty, align: 'right' });
-    pdf.text('PRICE', xPrice, y + 6, { width: cols.price, align: 'right' });
-    pdf.text('AMOUNT', xAmount, y + 6, { width: cols.amount - 8, align: 'right' });
+    pdf.text(t_('ITEM'), MARGIN + 8, y + 6, { width: nameW - 8, characterSpacing: 0.5 });
+    pdf.text(t_('QTY'), xQty, y + 6, { width: cols.qty, align: 'right' });
+    pdf.text(t_('PRICE'), xPrice, y + 6, { width: cols.price, align: 'right' });
+    pdf.text(t_('AMOUNT'), xAmount, y + 6, { width: cols.amount - 8, align: 'right' });
     pdf.y = y + 26;
   };
   ensure(60);
   tableHeader();
-  if (!lines.length) pdf.fillColor(COLORS.muted).font('Helvetica-Oblique').fontSize(9.5).text('No items.', MARGIN + 8, pdf.y, { width: nameW });
+  if (!lines.length) pdf.fillColor(COLORS.muted).font('Helvetica-Oblique').fontSize(9.5).text(t_('No items.'), MARGIN + 8, pdf.y, { width: nameW });
   lines.forEach((l, i) => {
     pdf.font('Helvetica-Bold').fontSize(10);
     const nameH = pdf.heightOfString(l.name, { width: nameW - 8 });
@@ -146,7 +153,7 @@ function generateDocument(detail, settings, link) {
     pdf.fillColor(COLORS.text).font('Helvetica-Bold').fontSize(10).text(l.name, MARGIN + 8, y, { width: nameW - 8 });
     if (l.description) pdf.fillColor(COLORS.muted).font('Helvetica').fontSize(9).text(l.description, MARGIN + 8, y + nameH + 2, { width: nameW - 8 });
     pdf.fillColor(COLORS.text).font('Helvetica').fontSize(9.5);
-    pdf.text(`${fmtQty(l.quantity)}${l.unit ? ` ${l.unit}` : ''}`, xQty - 20, y, { width: cols.qty + 20, align: 'right' });
+    pdf.text(`${fmtQty(l.quantity)}${l.unit ? ` ${t_(l.unit)}` : ''}`, xQty - 20, y, { width: cols.qty + 20, align: 'right' });
     pdf.text(fmtMoney(l.unit_price), xPrice, y, { width: cols.price, align: 'right' });
     pdf.text(`${fmtMoney(t.line_amounts[i])}${showTax && l.taxable ? ' T' : ''}`, xAmount, y, { width: cols.amount - 8, align: 'right' });
     pdf.y = y + nameH + descH + 8;
@@ -155,12 +162,13 @@ function generateDocument(detail, settings, link) {
   pdf.y += 8;
 
   // ---- Totals, right-aligned.
-  const rows = [['Subtotal', fmtMoney(t.subtotal)]];
-  if (t.discount) rows.push([`Discount${d.discount_type === 'percent' ? ` (${d.discount_value}%)` : ''}`, `-${fmtMoney(t.discount)}`]);
-  if (showTax) rows.push([`Tax (${d.tax_rate}% on items marked T)`, fmtMoney(t.tax)]);
-  rows.push(['Total', fmtMoney(t.total), true]);
-  if (d.type === 'quote' && t.deposit) rows.push([`Deposit due on approval (${d.deposit_percent}%)`, fmtMoney(t.deposit)]);
-  if (d.type === 'invoice' && t.paid) rows.push(['Paid', `-${fmtMoney(t.paid)}`], ['Balance due', fmtMoney(t.balance), true]);
+  const rows = [[t_('Subtotal'), fmtMoney(t.subtotal)]];
+  if (t.discount) rows.push([d.discount_type === 'percent' ? t_('Discount ({pct}%)', { pct: d.discount_value }) : t_('Discount'), `-${fmtMoney(t.discount)}`]);
+  if (showTax) rows.push([t_('Tax ({pct}% on items marked T)', { pct: d.tax_rate }), fmtMoney(t.tax)]);
+  rows.push([t_('Total'), fmtMoney(t.total), true]);
+  if (d.type === 'quote' && t.deposit) rows.push([t_('Deposit due on approval ({pct}%)', { pct: d.deposit_percent }), fmtMoney(t.deposit)]);
+  if (d.type === 'quote' && t.paid) rows.push([t_('Paid'), `-${fmtMoney(t.paid)}`]);
+  if (d.type === 'invoice' && t.paid) rows.push([t_('Paid'), `-${fmtMoney(t.paid)}`], [t_('Balance due'), fmtMoney(t.balance), true]);
   ensure(rows.length * 18 + 10);
   const labelW = 200;
   const xLabel = MARGIN + W - labelW - cols.amount;
@@ -177,10 +185,10 @@ function generateDocument(detail, settings, link) {
   if (d.type === 'invoice' && payments.length) {
     pdf.y += 10;
     ensure(30 + payments.length * 14);
-    heading('Payments received');
+    heading(t_('Payments received'));
     for (const p of payments) {
       pdf.fillColor(COLORS.text).font('Helvetica').fontSize(9.5)
-        .text(`${fmtDate(p.paid_on)}  ·  ${fmtMoney(p.amount)}${p.method ? `  ·  ${p.method}` : ''}${p.reference ? ` (${p.reference})` : ''}`, MARGIN, pdf.y, { width: W });
+        .text(`${fmtDate(p.paid_on)}  ·  ${fmtMoney(p.amount)}${p.method ? `  ·  ${t_(p.method)}` : ''}${p.reference ? ` (${p.reference})` : ''}`, MARGIN, pdf.y, { width: W });
     }
   }
 
@@ -195,31 +203,31 @@ function generateDocument(detail, settings, link) {
     heading(title);
     pdf.fillColor(COLORS.text).font('Helvetica').fontSize(9.5).text(text, MARGIN, pdf.y, { width: W });
   };
-  paragraph('Notes', d.notes);
-  if (d.type === 'invoice' && d.display_status !== 'paid' && d.display_status !== 'void') paragraph('How to pay', settings.payment_instructions);
-  paragraph('Terms', d.terms);
+  paragraph(t_('Notes'), d.notes);
+  if (d.type === 'invoice' && d.display_status !== 'paid' && d.display_status !== 'void') paragraph(t_('How to pay'), localized(settings, 'payment_instructions', lang));
+  paragraph(t_('Terms'), d.terms);
 
   // ---- Approval (quotes).
   if (d.type === 'quote') {
     pdf.y += 18;
     ensure(70);
-    heading('Approval');
+    heading(t_('Approval'));
     if (d.approved_at) {
       pdf.fillColor(COLORS.good).font('Helvetica-Bold').fontSize(10.5)
-        .text(`Approved by ${d.approved_name} on ${fmtDate(d.approved_at)}.`, MARGIN, pdf.y, { width: W });
+        .text(t_('Approved by {name} on {date}.', { name: d.approved_name, date: fmtDate(d.approved_at) }), MARGIN, pdf.y, { width: W });
     } else if (d.declined_at) {
-      pdf.fillColor(COLORS.bad).font('Helvetica-Bold').fontSize(10.5).text(`Declined on ${fmtDate(d.declined_at)}.`, MARGIN, pdf.y, { width: W });
+      pdf.fillColor(COLORS.bad).font('Helvetica-Bold').fontSize(10.5).text(t_('Declined on {date}.', { date: fmtDate(d.declined_at) }), MARGIN, pdf.y, { width: W });
     } else {
-      pdf.fillColor(COLORS.text).font('Helvetica').fontSize(9.5).text('By signing, I accept this quote and authorize the work described above.', MARGIN, pdf.y, { width: W });
+      pdf.fillColor(COLORS.text).font('Helvetica').fontSize(9.5).text(t_('By signing, I accept this quote and authorize the work described above.'), MARGIN, pdf.y, { width: W });
       const y = pdf.y + 30;
       pdf.moveTo(MARGIN, y).lineTo(MARGIN + W * 0.55, y).moveTo(MARGIN + W * 0.65, y).lineTo(MARGIN + W, y).lineWidth(0.75).strokeColor(COLORS.text).stroke();
-      pdf.fillColor(COLORS.muted).fontSize(8).text('Signature', MARGIN, y + 4).text('Date', MARGIN + W * 0.65, y + 4);
+      pdf.fillColor(COLORS.muted).fontSize(8).text(t_('Signature'), MARGIN, y + 4).text(t_('Date'), MARGIN + W * 0.65, y + 4);
       pdf.y = y + 18;
-      if (link) pdf.fillColor(COLORS.accent).fontSize(9.5).text('Or approve it online', MARGIN, pdf.y + 4, { link, underline: true });
+      if (link) pdf.fillColor(COLORS.accent).fontSize(9.5).text(t_('Or approve it online'), MARGIN, pdf.y + 4, { link, underline: true });
     }
   } else if (link && !['paid', 'void'].includes(d.display_status)) {
     pdf.y += 12;
-    pdf.fillColor(COLORS.accent).font('Helvetica').fontSize(9.5).text('View this invoice online', MARGIN, pdf.y, { link, underline: true });
+    pdf.fillColor(COLORS.accent).font('Helvetica').fontSize(9.5).text(payOnline ? t_('Pay this invoice online') : t_('View this invoice online'), MARGIN, pdf.y, { link, underline: true });
   }
 
   // ---- Footer on every page.
@@ -230,7 +238,7 @@ function generateDocument(detail, settings, link) {
     const y = pdf.page.height - MARGIN + 8;
     pdf.fillColor(COLORS.muted).font('Helvetica').fontSize(8);
     pdf.text(`${settings.company_name ? `${settings.company_name} · ` : ''}${label} ${d.number}`, MARGIN, y, { width: W / 2, lineBreak: false });
-    pdf.text(`Page ${i - range.start + 1} of ${range.count}`, MARGIN + W / 2, y, { width: W / 2, align: 'right', lineBreak: false });
+    pdf.text(t_('Page {n} of {count}', { n: i - range.start + 1, count: range.count }), MARGIN + W / 2, y, { width: W / 2, align: 'right', lineBreak: false });
   }
   pdf.end();
   return done;

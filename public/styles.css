@@ -216,3 +216,41 @@ button.contact-row { width: 100%; text-align: left; font-weight: 400; justify-co
 .public-doc h3 { margin-top: 1.1rem; font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
 .approve-card { border: 2px solid var(--accent); }
 .powered { text-align: center; margin: 1.5rem 0 0; }
+
+/* Language switch, bell, notifications */
+.lang-switch { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; flex: none; }
+.lang-switch button { min-height: 32px; padding: 0.2rem 0.65rem; border: 0; border-radius: 0; font-size: 0.85rem; background: var(--surface); }
+.lang-switch button.active { background: var(--accent); color: #fff; }
+.menu-lang { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; padding: 0.4rem 0.7rem 0.6rem; }
+.bell { position: relative; width: 38px; height: 38px; min-height: 38px; padding: 0; border: 0; border-radius: 50%; background: rgba(255, 255, 255, 0.18); color: #fff; font-size: 1.05rem; flex: none; }
+.bell-count { position: absolute; top: -3px; right: -3px; min-width: 18px; height: 18px; padding: 0 4px; border-radius: 999px; background: #e11d48; color: #fff; font-size: 0.7rem; font-weight: 700; line-height: 18px; text-align: center; }
+.notice-list { list-style: none; padding: 0; margin: 0.75rem 0 0; max-height: 60vh; overflow-y: auto; }
+.notice-list li a { display: flex; gap: 0.6rem; padding: 0.65rem 0.4rem; border-bottom: 1px solid var(--border); color: inherit; text-decoration: none; }
+.notice-list li.unread a { background: var(--accent-soft); font-weight: 600; }
+.notice-icon { flex: none; width: 1.5rem; text-align: center; }
+
+/* Sign-up / sign-in */
+.brand-mark { display: flex; align-items: center; justify-content: center; gap: 0.5rem; font-size: 1.6rem; font-weight: 800; color: var(--accent); }
+.logo-dot { display: inline-flex; align-items: center; justify-content: center; width: 38px; height: 38px; border-radius: 10px; background: var(--accent); color: #fff; font-size: 1.3rem; }
+.tagline { text-align: center; color: var(--muted); margin: 0.25rem 0 1rem; }
+.center { text-align: center; }
+.tiny { font-size: 0.75rem; }
+
+/* Premium, leads, website, get paid */
+.badge.premium { background: #fff4d6; color: #8a6100; }
+.premium-card { border: 2px solid #f0c75e; background: #fffbef; }
+.premium-card ul { padding-left: 1.2rem; }
+.lead-new { border-left: 4px solid var(--accent); }
+.lead p { margin: 0.5rem 0; }
+.lead .row { margin-top: 0.4rem; }
+.site-photo { width: 220px; height: 110px; display: flex; align-items: center; justify-content: center; border: 1px dashed var(--border); border-radius: 8px; background: #fafbfc; overflow: hidden; }
+.site-photo img { width: 100%; height: 100%; object-fit: cover; }
+.money-notes { margin: 0.5rem 0 0; padding-left: 1.1rem; color: var(--muted); }
+.money-notes li { margin: 0.2rem 0; }
+
+/* The customer's page: pay or finance */
+.public-top { margin-bottom: 0.5rem; }
+.pay-card { border: 2px solid var(--good); }
+.pay-card .big { width: 100%; min-height: 52px; font-size: 1.1rem; background: var(--good); border-color: var(--good); }
+.finance-box { margin-top: 1rem; padding-top: 0.9rem; border-top: 1px solid var(--border); }
+.finance-box p { margin: 0.3rem 0 0.6rem; }

@@ -1,8 +1,11 @@
-// Email through the SMTP server in .env (see README). Returns null when email isn't set up.
+// Email through the SMTP server in .env (see README). mailer() is null when email isn't set up.
 const config = require('./config');
 
+// Tests put a fake sender here.
+const services = { mail: null };
+
 let transport;
-function mailer() {
+function smtp() {
   if (!config.mailEnabled) return null;
   if (!transport) {
     const nodemailer = require('nodemailer');
@@ -25,4 +28,6 @@ function mailer() {
   });
 }
 
-module.exports = { mailer };
+const mailer = () => services.mail || smtp();
+
+module.exports = { mailer, services };
