@@ -215,3 +215,4 @@ button.contact-row { width: 100%; text-align: left; font-weight: 400; justify-co
 .public-totals { max-width: 340px; margin: 0.75rem 0 0 auto; }
 .public-doc h3 { margin-top: 1.1rem; font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
 .approve-card { border: 2px solid var(--accent); }
+.powered { text-align: center; margin: 1.5rem 0 0; }

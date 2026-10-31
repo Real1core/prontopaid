@@ -247,7 +247,7 @@ function renderNav(hash, isPublic) {
     },
   }, initials || '?');
   fill(bar,
-    isHome ? h('a', { href: '#/', class: 'brand' }, state.companyName || 'Quotes & Invoices')
+    isHome ? h('a', { href: '#/', class: 'brand' }, state.companyName || 'ProntoPaid')
       : h('a', { href: billingBack(), class: 'back' }, h('span', { 'aria-hidden': 'true' }, '‹'), ' Back'),
     h('span', { class: 'spacer' }),
     account,
@@ -323,7 +323,7 @@ async function viewSignin() {
 
 async function viewSetup() {
   if (!state.needsSetup) return void (location.hash = state.user ? '#/' : '#/signin');
-  authPage('Set up Quotes & Invoices', 'Your business name goes on every quote and invoice. You will be the administrator and can add your team afterwards.', authForm('Get started', [
+  authPage('Set up ProntoPaid', 'Quote, invoice and get paid fast. Your business name goes on every quote and invoice. You will be the administrator and can add your team afterwards.', authForm('Get started', [
     authInput('company_name', 'Business name', { autocomplete: 'organization' }),
     authInput('name', 'Your name', { autocomplete: 'name' }),
     authInput('email', 'Your email', { type: 'email', autocomplete: 'username' }),
@@ -1293,5 +1293,6 @@ async function viewPublicDocument(token) {
         doc.approved_at ? h('div', { class: 'banner ok' }, `Approved by ${doc.approved_name} on ${fmtDate(doc.approved_at)}. Thank you!`) : null,
         doc.declined_at ? h('div', { class: 'banner' }, 'This quote was declined.') : null,
         h('div', { class: 'modal-actions' }, h('a', { class: 'btn', href: `${pdfUrl}?download=1` }, 'Download PDF'))),
-      approval));
+      approval,
+      h('p', { class: 'small muted powered' }, 'Sent with ProntoPaid')));
 }

@@ -14,7 +14,7 @@ function createApp(db) {
 
   app.use(
     cookieSession({
-      name: 'quotes_session',
+      name: 'prontopaid_session',
       keys: [config.sessionSecret],
       maxAge: 30 * 24 * 60 * 60 * 1000,
       sameSite: 'lax',

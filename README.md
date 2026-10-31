@@ -1,4 +1,6 @@
-# Quotes & Invoices
+# ProntoPaid
+
+*Cotiza. Factura. Cobra pronto.* (Quote. Invoice. Get paid fast.)
 
 A mobile-friendly web app, in the style of Joist, for contractors and vendors to make quotes and invoices: write a quote on the spot, send it, let the customer approve it online, turn it into an invoice and record the payments.
 
@@ -28,7 +30,7 @@ npm run seed      # optional: sample customers and price list items
 npm start         # http://localhost:3000
 ```
 
-Open the app and set up your business. Data is kept in `data/` (the SQLite database `quotes.db` and the logo); back that folder up.
+Open the app and set up your business. Data is kept in `data/` (the SQLite database `prontopaid.db` and the logo); back that folder up.
 
 Run the tests with `npm test`.
 

@@ -4,5 +4,5 @@ const config = require('../server/config');
 const { openDb } = require('../server/db');
 const { seedSamples } = require('../server/seed');
 
-seedSamples(openDb(path.join(config.dataDir, 'quotes.db')));
+seedSamples(openDb(path.join(config.dataDir, 'prontopaid.db')));
 console.log('Sample customers and price list added. Run "npm start".');

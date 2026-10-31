@@ -3,7 +3,7 @@ const os = require('os');
 const path = require('path');
 
 // Isolated data folder, and no email, for every test run (set before config loads).
-process.env.DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'quotes-test-'));
+process.env.DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'prontopaid-test-'));
 for (const key of ['SMTP_HOST', 'MAIL_FROM', 'BASE_URL', 'SESSION_SECRET']) delete process.env[key];
 
 const { openDb } = require('../server/db');

@@ -1,5 +1,5 @@
 {
-  "name": "quotes-invoices",
+  "name": "prontopaid",
   "version": "1.0.0",
   "description": "Quotes and invoices for contractors and vendors: customers, a price list, PDFs, online approval, invoices and payments",
   "main": "server/index.js",
